@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { SiteLayout } from "@/components/site/SiteLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { supabase } from "@/integrations/supabase/client";
+import { listRates } from "@/lib/api.functions";
 
 export const Route = createFileRoute("/rates")({
   head: () => ({
@@ -27,14 +27,7 @@ export const Route = createFileRoute("/rates")({
 function RatesPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["payout_rates"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payout_rates")
-        .select("country_code,country_name,cpm")
-        .order("cpm", { ascending: false });
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => listRates(),
   });
 
   return (

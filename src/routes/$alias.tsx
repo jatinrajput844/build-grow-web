@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Link2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
+import { resolveAlias, recordClick } from "@/lib/api.functions";
 import { detectCountry, deviceType } from "@/lib/shortener";
 
 export const Route = createFileRoute("/$alias")({
@@ -34,34 +34,27 @@ function AliasPage() {
     let active = true;
 
     const run = async () => {
-      const [{ data: link }, { data: settings }] = await Promise.all([
-        supabase
-          .from("links")
-          .select("id,destination,is_active")
-          .eq("alias", alias)
-          .maybeSingle(),
-        supabase.from("site_settings").select("key,value").eq("key", "ad_wait_seconds"),
-      ]);
-
+      const link = await resolveAlias({ data: { alias } });
       if (!active) return;
-      if (!link || !link.is_active) {
+      if (!link) {
         setState("missing");
         return;
       }
 
-      const wait = Number(settings?.[0]?.value ?? 8);
-      setSeconds(Number.isFinite(wait) && wait > 0 ? wait : 8);
+      setSeconds(Number.isFinite(link.wait) && link.wait > 0 ? link.wait : 8);
       setDestination(link.destination);
       setState("counting");
 
       if (!recorded.current) {
         recorded.current = true;
         const country = await detectCountry();
-        await supabase.from("clicks").insert({
-          link_id: link.id,
-          country_code: country,
-          referrer: document.referrer || null,
-          device: deviceType(),
+        await recordClick({
+          data: {
+            link_id: link.id,
+            country_code: country,
+            referrer: document.referrer || "",
+            device: deviceType(),
+          },
         });
       }
     };
