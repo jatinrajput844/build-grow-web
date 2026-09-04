@@ -50,7 +50,7 @@ function Home() {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const { data: rates } = useQuery({
+  const { data: rates, error: ratesError } = useQuery({
     queryKey: ["top-rates"],
     queryFn: async () => (await listRates()).slice(0, 5),
   });
@@ -150,6 +150,16 @@ function Home() {
               </p>
             </CardContent>
           </Card>
+
+          {ratesError && (
+            <div className="mx-auto mt-8 max-w-3xl rounded-xl border border-destructive/40 bg-card p-4 text-left text-sm">
+              <p className="font-semibold">Database not connected yet</p>
+              <p className="mt-1 text-muted-foreground">
+                Add your MongoDB connection string as MONGODB_URI in the .env file, then reload
+                this page. Accounts, links and earnings will be saved there.
+              </p>
+            </div>
+          )}
 
           {announcement && (
             <div className="mx-auto mt-8 flex max-w-3xl items-start gap-3 rounded-xl border border-border bg-card p-4 text-left">
