@@ -18,9 +18,9 @@ import { SiteLayout } from "@/components/site/SiteLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { supabase } from "@/integrations/supabase/client";
+import { createLink, getAnnouncement, listRates } from "@/lib/api.functions";
 import { useAuth } from "@/hooks/useAuth";
-import { normalizeUrl, randomAlias, shortUrl } from "@/lib/shortener";
+import { normalizeUrl, shortUrl } from "@/lib/shortener";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -52,29 +52,12 @@ function Home() {
 
   const { data: rates } = useQuery({
     queryKey: ["top-rates"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payout_rates")
-        .select("country_code,country_name,cpm")
-        .order("cpm", { ascending: false })
-        .limit(5);
-      if (error) throw error;
-      return data;
-    },
+    queryFn: async () => (await listRates()).slice(0, 5),
   });
 
   const { data: announcement } = useQuery({
     queryKey: ["announcement"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("announcements")
-        .select("title,body")
-        .eq("is_active", true)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      return data;
-    },
+    queryFn: () => getAnnouncement(),
   });
 
   const create = async () => {
@@ -94,19 +77,19 @@ function Home() {
       return;
     }
     setBusy(true);
-    const { data, error } = await supabase
-      .from("links")
-      .insert({ user_id: user.id, destination, alias: custom || randomAlias() })
-      .select("alias")
-      .single();
-    setBusy(false);
-    if (error) {
-      toast.error(error.message.includes("duplicate") ? "That alias is taken" : error.message);
+    try {
+      const created = await createLink({
+        data: { destination, ...(custom ? { alias: custom } : {}) },
+      });
+      setResult(shortUrl(created.alias));
+      setUrl("");
+      setAlias("");
+    } catch (err) {
+      setBusy(false);
+      toast.error(err instanceof Error ? err.message : "Could not create the link");
       return;
     }
-    setResult(shortUrl(data.alias));
-    setUrl("");
-    setAlias("");
+    setBusy(false);
     toast.success("Short link created");
   };
 
