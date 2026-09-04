@@ -7,8 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
+import { signIn, signUp } from "@/lib/api.functions";
 import { useAuth } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/auth")({
@@ -32,49 +31,59 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const navigate = useNavigate();
-  const { user, loading } = useAuth();
+  const { user, loading, refreshProfile } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [ref, setRef] = useState("");
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("ref");
+    if (code) setRef(code);
+  }, []);
 
   useEffect(() => {
     if (!loading && user) void navigate({ to: "/dashboard" });
   }, [user, loading, navigate]);
 
-  const signIn = async () => {
+  const doSignIn = async () => {
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setBusy(false);
-    if (error) return toast.error(error.message);
-    toast.success("Welcome back!");
-    void navigate({ to: "/dashboard" });
+    try {
+      await signIn({ data: { email, password } });
+      await refreshProfile();
+      toast.success("Welcome back!");
+      void navigate({ to: "/dashboard" });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const signUp = async () => {
-    if (password.length < 6) return toast.error("Password must be at least 6 characters");
+  const doSignUp = async () => {
+    if (password.length < 6) {
+      toast.error("Password must be at least 6 characters");
+      return;
+    }
     setBusy(true);
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/dashboard`,
-        data: { display_name: name || email.split("@")[0] },
-      },
-    });
-    setBusy(false);
-    if (error) return toast.error(error.message);
-    toast.success("Account created! You can start shortening links now.");
-    void navigate({ to: "/dashboard" });
-  };
-
-  const google = async () => {
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) return toast.error("Google sign-in failed");
-    if (result.redirected) return;
-    void navigate({ to: "/dashboard" });
+    try {
+      await signUp({
+        data: {
+          email,
+          password,
+          ...(name.trim() ? { display_name: name.trim() } : {}),
+          ...(ref ? { ref } : {}),
+        },
+      });
+      await refreshProfile();
+      toast.success("Account created! You can start shortening links now.");
+      void navigate({ to: "/dashboard" });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Sign up failed");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -92,14 +101,11 @@ function AuthPage() {
           <CardDescription>Log in or create a free account to start earning.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button variant="outline" className="w-full" onClick={() => void google()}>
-            Continue with Google
-          </Button>
-          <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-            <span className="h-px flex-1 bg-border" /> or use email{" "}
-            <span className="h-px flex-1 bg-border" />
-          </div>
-
+          {ref && (
+            <p className="mb-4 rounded-lg bg-primary-soft px-3 py-2 text-xs text-primary">
+              You were invited by a friend — sign up to link your accounts.
+            </p>
+          )}
           <Tabs defaultValue="login">
             <TabsList className="w-full">
               <TabsTrigger value="login" className="flex-1">
@@ -127,9 +133,10 @@ function AuthPage() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void doSignIn()}
                 />
               </div>
-              <Button className="w-full" disabled={busy} onClick={() => void signIn()}>
+              <Button className="w-full" disabled={busy} onClick={() => void doSignIn()}>
                 <Mail className="size-4" /> {busy ? "Please wait..." : "Log in"}
               </Button>
             </TabsContent>
@@ -157,11 +164,19 @@ function AuthPage() {
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
-              <Button className="w-full" disabled={busy} onClick={() => void signUp()}>
-                {busy ? "Creating account..." : "Create free account"}
+              <Button className="w-full" disabled={busy} onClick={() => void doSignUp()}>
+                {busy ? "Please wait..." : "Create free account"}
               </Button>
             </TabsContent>
           </Tabs>
+
+          <p className="mt-5 text-center text-xs text-muted-foreground">
+            By continuing you agree to our{" "}
+            <Link to="/terms" className="text-primary underline-offset-2 hover:underline">
+              terms
+            </Link>
+            .
+          </p>
         </CardContent>
       </Card>
     </div>
