@@ -138,8 +138,8 @@ async function connect(): Promise<Db> {
 export function getDb(): Promise<Db> {
   const g = globalThis as GlobalWithMongo;
   if (!g.__rootxMongo) {
-    g.__rootxMongo = connect().catch((err) => {
-      g.__rootxMongo = undefined;
+    g.__rootxMongo = connect().catch((err: unknown) => {
+      delete g.__rootxMongo;
       throw err;
     });
   }
