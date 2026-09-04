@@ -26,9 +26,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  createLink,
+  createLinksBulk,
+  deleteLink as deleteLinkFn,
+  getReferralStats,
+  getSettings,
+  listMyClicks,
+  listMyLinks,
+  listMyWithdrawals,
+  requestWithdrawal as requestWithdrawalFn,
+  setLinkActive,
+} from "@/lib/api.functions";
 import { useAuth } from "@/hooks/useAuth";
-import { money, money2, normalizeUrl, randomAlias, shortUrl } from "@/lib/shortener";
+import { money, money2, normalizeUrl, shortUrl } from "@/lib/shortener";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -62,52 +73,30 @@ function DashboardPage() {
   const links = useQuery({
     queryKey: ["my-links", user?.id],
     enabled: Boolean(user),
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("links")
-        .select("id,alias,destination,title,is_active,clicks,earnings,created_at")
-        .eq("user_id", user!.id)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => listMyLinks(),
   });
 
   const clicks = useQuery({
     queryKey: ["my-clicks", user?.id],
     enabled: Boolean(user),
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("clicks")
-        .select("id,country_code,device,referrer,earned,created_at")
-        .order("created_at", { ascending: false })
-        .limit(500);
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => listMyClicks(),
   });
 
   const withdrawals = useQuery({
     queryKey: ["my-withdrawals", user?.id],
     enabled: Boolean(user),
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("withdrawals")
-        .select("id,amount,method,account_details,status,created_at")
-        .eq("user_id", user!.id)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => listMyWithdrawals(),
+  });
+
+  const referrals = useQuery({
+    queryKey: ["my-referrals", user?.id],
+    enabled: Boolean(user),
+    queryFn: () => getReferralStats(),
   });
 
   const settings = useQuery({
     queryKey: ["settings"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("site_settings").select("key,value");
-      if (error) throw error;
-      return Object.fromEntries(data.map((s) => [s.key, s.value])) as Record<string, string>;
-    },
+    queryFn: () => getSettings(),
   });
 
   const [destination, setDestination] = useState("");
@@ -123,26 +112,31 @@ function DashboardPage() {
   const minWithdrawal = Number(settings.data?.["min_withdrawal"] ?? 5);
   const referralPercent = Number(settings.data?.["referral_percent"] ?? 20);
 
-  const createLink = async () => {
+  const submitLink = async () => {
     const url = normalizeUrl(destination);
-    if (!url) return toast.error("Enter a valid link, e.g. example.com/page");
+    if (!url) {
+      toast.error("Enter a valid link, e.g. example.com/page");
+      return;
+    }
     setBusy(true);
-    const { error } = await supabase.from("links").insert({
-      user_id: user!.id,
-      destination: url,
-      alias: alias.trim() || randomAlias(),
-      title: title.trim() || null,
-    });
-    setBusy(false);
-    if (error)
-      return toast.error(
-        error.message.includes("duplicate") ? "That custom name is taken" : error.message,
-      );
-    setDestination("");
-    setAlias("");
-    setTitle("");
-    toast.success("Short link created");
-    void qc.invalidateQueries({ queryKey: ["my-links", user?.id] });
+    try {
+      await createLink({
+        data: {
+          destination: url,
+          ...(alias.trim() ? { alias: alias.trim() } : {}),
+          ...(title.trim() ? { title: title.trim() } : {}),
+        },
+      });
+      setDestination("");
+      setAlias("");
+      setTitle("");
+      toast.success("Short link created");
+      void qc.invalidateQueries({ queryKey: ["my-links", user?.id] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create the link");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const createBulk = async () => {
@@ -150,25 +144,30 @@ function DashboardPage() {
       .split("\n")
       .map((r) => normalizeUrl(r))
       .filter((r): r is string => Boolean(r));
-    if (!rows.length) return toast.error("Add one link per line");
+    if (!rows.length) {
+      toast.error("Add one link per line");
+      return;
+    }
     setBusy(true);
-    const { error } = await supabase
-      .from("links")
-      .insert(rows.map((url) => ({ user_id: user!.id, destination: url, alias: randomAlias() })));
-    setBusy(false);
-    if (error) return toast.error(error.message);
-    setBulk("");
-    toast.success(`${rows.length} links created`);
-    void qc.invalidateQueries({ queryKey: ["my-links", user?.id] });
+    try {
+      await createLinksBulk({ data: { destinations: rows } });
+      setBulk("");
+      toast.success(`${rows.length} links created`);
+      void qc.invalidateQueries({ queryKey: ["my-links", user?.id] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create the links");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const toggleLink = async (id: string, value: boolean) => {
-    await supabase.from("links").update({ is_active: value }).eq("id", id);
+    await setLinkActive({ data: { id, is_active: value } });
     void qc.invalidateQueries({ queryKey: ["my-links", user?.id] });
   };
 
   const removeLink = async (id: string) => {
-    await supabase.from("links").delete().eq("id", id);
+    await deleteLinkFn({ data: { id } });
     toast.success("Link deleted");
     void qc.invalidateQueries({ queryKey: ["my-links", user?.id] });
   };
@@ -180,22 +179,26 @@ function DashboardPage() {
 
   const requestWithdrawal = async () => {
     const value = Number(amount);
-    if (!Number.isFinite(value) || value < minWithdrawal)
-      return toast.error(`Minimum withdrawal is ${money2(minWithdrawal)}`);
-    if (value > Number(profile?.balance ?? 0)) return toast.error("Amount is more than your balance");
-    if (!account.trim()) return toast.error("Add your payment details");
-    const { error } = await supabase.from("withdrawals").insert({
-      user_id: user!.id,
-      amount: value,
-      method,
-      account_details: account.trim(),
-    });
-    if (error) return toast.error(error.message);
-    setAmount("");
-    setAccount("");
-    toast.success("Withdrawal requested");
-    void qc.invalidateQueries({ queryKey: ["my-withdrawals", user?.id] });
-    void refreshProfile();
+    if (!Number.isFinite(value) || value < minWithdrawal) {
+      toast.error(`Minimum withdrawal is ${money2(minWithdrawal)}`);
+      return;
+    }
+    if (!account.trim()) {
+      toast.error("Add your payment details");
+      return;
+    }
+    try {
+      await requestWithdrawalFn({
+        data: { amount: value, method, account_details: account.trim() },
+      });
+      setAmount("");
+      setAccount("");
+      toast.success("Withdrawal requested");
+      void qc.invalidateQueries({ queryKey: ["my-withdrawals", user?.id] });
+      void refreshProfile();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not request the withdrawal");
+    }
   };
 
   const totalClicks = links.data?.reduce((s, l) => s + Number(l.clicks), 0) ?? 0;
@@ -277,7 +280,7 @@ function DashboardPage() {
                       <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} />
                     </div>
                   </div>
-                  <Button className="w-full" disabled={busy} onClick={() => void createLink()}>
+                  <Button className="w-full" disabled={busy} onClick={() => void submitLink()}>
                     Create short link
                   </Button>
                 </CardContent>
@@ -533,6 +536,31 @@ function DashboardPage() {
                 <p className="text-sm text-muted-foreground">
                   Your referral code is <strong>{profile?.referral_code ?? "—"}</strong>.
                 </p>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Member</TableHead>
+                      <TableHead>Joined</TableHead>
+                      <TableHead className="text-right">Their earnings</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {referrals.data?.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell>{r.display_name}</TableCell>
+                        <TableCell>{new Date(r.joined).toLocaleDateString()}</TableCell>
+                        <TableCell className="text-right">{money2(r.total_earnings)}</TableCell>
+                      </TableRow>
+                    ))}
+                    {!referrals.data?.length && (
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-center text-muted-foreground">
+                          No one has joined with your link yet.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </TabsContent>
